@@ -1,17 +1,25 @@
+import { decryptData } from "@/lib/encryption"
 import { Groq } from "groq-sdk"
 import { NextResponse } from "next/server"
 
-if (!process.env.GROQ_API_KEY) {
-  throw new Error("Missing GROQ_API_KEY environment variable")
-}
-
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-})
 
 export async function POST(req: Request) {
   try {
     const { messages = [], extractedText, jsonData, isRequestingEmail, personalDetails , wordLimit=100 } = await req.json()
+    // Get encrypted settings from request headers
+    const encryptedApiKey = req.headers.get("x-api-key") || "";
+    const encryptedModel = req.headers.get("x-model") || "deepseek-r1-distill-llama-70b";
+
+    // Decrypt API key
+    const apiKey = decryptData(encryptedApiKey)
+
+    if (!apiKey) {
+      throw new Error("Missing Groq API key")
+    }
+
+    const groq = new Groq({
+      apiKey: apiKey,
+    })
 
     const systemPrompt = {
       role: "system",
@@ -50,7 +58,7 @@ export async function POST(req: Request) {
 
     const completion = await groq.chat.completions.create({
       messages: combinedMessages,
-      model: "deepseek-r1-distill-llama-70b",
+      model: encryptedModel,
       temperature: 0.7,
       max_tokens: 1000,
       top_p: 1,

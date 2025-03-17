@@ -468,7 +468,6 @@
 // }
 
 
-
 "use client"
 
 import { cn } from "@/lib/utils"
@@ -478,14 +477,15 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { AutoResizeTextarea } from "@/components/autoresize-textarea"
 import { PersonalDetailsModal } from "@/components/personal-details-modal"
-import { SettingsModal } from "@/components/settings-modal"
 import { useToast } from "@/components/ui/use-toast"
 import  Slider  from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type React from "react"
 import { createWorker } from "tesseract.js"
-import { setgid } from "process"
+import { useSettings } from "@/context/settings-context"
+import { encryptData } from "@/lib/encryption"
+import Link from "next/link"
 
 type Message = {
   role: "user" | "assistant"
@@ -521,13 +521,13 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
   const [extractedText, setExtractedText] = useState<string>("")
   const [isRequestingEmail, setIsRequestingEmail] = useState(false)
   const [personalDetails, setPersonalDetails] = useState<PersonalDetails | null>(null)
-  const [wordLimit, setWordLimit] = useState<number>(100)
-  const [wordLimitInput, setWordLimitInput] = useState<string>("150")
+  const [wordLimit, setWordLimit] = useState<number>(130)
+  const [wordLimitInput, setWordLimitInput] = useState<string>("130")
   const [showWordLimitError, setShowWordLimitError] = useState<boolean>(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [sentIds, setSentIds] = useState<any>({})
   const { toast } = useToast()
+  const { settings } = useSettings()
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -642,10 +642,17 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
     setIsRequestingEmail(false)
 
     try {
+      // Encrypt sensitive data for transmission
+      const encryptedApiKey = encryptData(settings.apiKey)
+      const encryptedSmtpSettings = encryptData(JSON.stringify(settings.smtp))
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-api-key": encryptedApiKey,
+          "x-model": settings.selectedModel,
+          "x-smtp-settings": encryptedSmtpSettings,
         },
         body: JSON.stringify({
           messages: [...messages, userMessage],
@@ -703,13 +710,16 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
     })
   }
 
-  const handleSendEmail = async (id:number ,emailContent: { email?: string; subject?: string; body?: string  }) => {
-    setSentIds((prev:any) =>({...prev ,[id]:"Sending" }))
+  const handleSendEmail = async (emailContent: { email?: string; subject?: string; body?: string }) => {
     try {
+      // Encrypt SMTP settings for transmission
+      const encryptedSmtpSettings = encryptData(JSON.stringify(settings.smtp))
+
       const response = await fetch("/api/send-email", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-smtp-settings": encryptedSmtpSettings,
         },
         body: JSON.stringify(emailContent),
       })
@@ -718,9 +728,7 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
         toast({
           title: "Email Sent",
           description: `Email successfully sent to ${emailContent.email}`,
-
         })
-        setSentIds((prev:any) =>({...prev ,[id]:"sent" }))
       } else {
         throw new Error("Failed to send email")
       }
@@ -823,7 +831,7 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
                 />
               </div>
               <div className="flex justify-between items-center">
-                <Button onClick={() => handleSendEmail(index+ 1 ,message?.content)}> {sentIds[index+ 1] ?? "Send Email"}</Button>
+                <Button onClick={() => handleSendEmail(message?.content)}>Send Email</Button>
                 <p
                   className={cn(
                     "text-sm",
@@ -888,7 +896,9 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
           <h1 className="text-xl font-semibold">AI Chatbot</h1>
           <div className="flex space-x-2">
             <PersonalDetailsModal onSave={handleSavePersonalDetails} />
-            <SettingsModal />
+            <Link href="/settings">
+              <Button variant="outline">Settings</Button>
+            </Link>
           </div>
         </div>
         <div className="flex-1 content-center overflow-y-auto px-6">{messages.length ? messageList : header}</div>
