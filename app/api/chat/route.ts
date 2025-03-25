@@ -5,7 +5,7 @@ import { NextResponse } from "next/server"
 
 export async function POST(req: Request) {
   try {
-    const { messages = [], extractedText, jsonData, isRequestingEmail, personalDetails , wordLimit=100 } = await req.json()
+    const { messages = [], extractedText, personalDetails , wordLimit=100 } = await req.json()
     // Get encrypted settings from request headers
     const encryptedApiKey = req.headers.get("x-api-key") || "";
     const encryptedModel = req.headers.get("x-model") || "deepseek-r1-distill-llama-70b";
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
       : null
 
       // kep only last 3 messages context
-    const formattedMessages = messages.slice(-3).map(({ role, content }: any) => ({
+    const formattedMessages = messages.slice(-3).map(({ role, content }:{role:string,content:unknown}) => ({
       role,
       content: typeof content === "string" ? content : JSON.stringify(content),
     }))

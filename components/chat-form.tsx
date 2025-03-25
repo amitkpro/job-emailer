@@ -466,19 +466,17 @@
 //     </TooltipProvider>
 //   )
 // }
-
-
 "use client"
 
 import { cn } from "@/lib/utils"
 import { useState, useRef, useEffect } from "react"
-import { ArrowUpIcon, ImageIcon, MailIcon, Trash2Icon, RefreshCwIcon } from "lucide-react"
+import { ArrowUpIcon, ImageIcon, MailIcon, Trash2Icon, RefreshCwIcon, Loader2, Database } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { AutoResizeTextarea } from "@/components/autoresize-textarea"
 import { PersonalDetailsModal } from "@/components/personal-details-modal"
 import { useToast } from "@/components/ui/use-toast"
-import  Slider  from "@/components/ui/slider"
+import {Slider} from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type React from "react"
@@ -487,15 +485,16 @@ import { useSettings } from "@/context/settings-context"
 import { encryptData } from "@/lib/encryption"
 import Link from "next/link"
 
+interface EmailContent {
+  email: string
+  subject: string
+  body: string
+  sent: boolean
+}
+
 type Message = {
   role: "user" | "assistant"
-  content:
-    | string
-    | {
-        email?: string
-        subject?: string
-        body?: string
-      }
+  content:EmailContent | string;
   image?: string
 }
 
@@ -527,7 +526,11 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
-  const { settings } = useSettings()
+  const { settings, updateSelectedModel, models } = useSettings()
+
+  // Add these states near the other state declarations at the top
+  const [sendingEmail, setSendingEmail] = useState<number | null>(null)
+  const [showModelSelect, setShowModelSelect] = useState<number | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -597,17 +600,17 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
     }
   }
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (file && file.type.startsWith("image/")) {
-      handleImageUpload(file)
-    }
-  }
+  // const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  //   e.preventDefault()
+  //   const file = e.dataTransfer.files[0]
+  //   if (file && file.type.startsWith("image/")) {
+  //     handleImageUpload(file)
+  //   }
+  // }
 
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-  }
+  // const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+  //   e.preventDefault()
+  // }
 
   const handleWordLimitChange = (value: string) => {
     setWordLimitInput(value)
@@ -674,6 +677,7 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
           email: data.email,
           subject: data.subject,
           body: data.body,
+          sent: false,
         },
       }
       setMessages((prevMessages) => [...prevMessages, assistantMessage])
@@ -710,8 +714,14 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
     })
   }
 
-  const handleSendEmail = async (emailContent: { email?: string; subject?: string; body?: string }) => {
+  // Update the handleSendEmail function to include loading state
+  const handleSendEmail = async (emailContent: { email?: string; subject?: string; body?: string  , sent?:boolean} |string, index: number) => {
+
+    if(typeof emailContent === "object" && emailContent.email !== undefined && emailContent.subject !== undefined && emailContent.body !== undefined){    
+      
+    
     try {
+      setSendingEmail(index)
       // Encrypt SMTP settings for transmission
       const encryptedSmtpSettings = encryptData(JSON.stringify(settings.smtp))
 
@@ -725,6 +735,16 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
       })
 
       if (response.ok) {
+        // Update message to mark as sent
+        const updatedMessages = [...messages]
+        if (typeof updatedMessages[index].content === "object") {
+          updatedMessages[index].content = {
+            ...updatedMessages[index].content,
+            sent: true,
+          }
+        }
+        setMessages(updatedMessages)
+
         toast({
           title: "Email Sent",
           description: `Email successfully sent to ${emailContent.email}`,
@@ -739,12 +759,105 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
         title: "Error",
         description: "Failed to send email. Please try again.",
       })
+    } finally {
+      setSendingEmail(null)
+    }
+  }
+  }
+
+  // Add a new function to regenerate an email
+  const handleRegenerateEmail = async (index: number) => {
+    try {
+      setIsLoading(true)
+
+      // Get the previous user message (the one that triggered this response)
+      const userMessageIndex = index - 1
+      if (userMessageIndex < 0 || messages[userMessageIndex].role !== "user") {
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Cannot regenerate this email. Missing context.",
+        })
+        return
+      }
+
+      // const userMessage = messages[userMessageIndex]
+
+      // Encrypt sensitive data for transmission
+      const encryptedApiKey = encryptData(settings.apiKey)
+      const encryptedSmtpSettings = encryptData(JSON.stringify(settings.smtp))
+
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": encryptedApiKey,
+          "x-model": settings.selectedModel,
+          "x-smtp-settings": encryptedSmtpSettings,
+        },
+        body: JSON.stringify({
+          messages: messages.slice(0, userMessageIndex + 1),
+          extractedText: "",
+          isRequestingEmail: true,
+          personalDetails,
+          wordLimit,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to regenerate response")
+      }
+
+      const data = await response.json()
+
+      // Update the existing assistant message
+      const updatedMessages = [...messages]
+      updatedMessages[index] = {
+        role: "assistant",
+        content: {
+          email: data.email,
+          subject: data.subject,
+          body: data.body,
+          sent: false,
+        },
+      }
+
+      setMessages(updatedMessages)
+
+      toast({
+        title: "Email Regenerated",
+        description: "The AI has regenerated the email content.",
+      })
+    } catch (err) {
+      console.error("Error:", err)
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "An error occurred while regenerating the email.",
+      })
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const handleUpdateInput = (name: string, value: string, index: number) => {
-    const updatedMessages = [...messages]
-    updatedMessages[index].content[name] = value
+  // Add a function to change the model and regenerate
+  const handleChangeModel = async (model: string, index: number) => {
+    updateSelectedModel(model)
+    toast({
+      title: "Model Changed",
+      description: `Model has been updated to ${model}`,
+    })
+    setShowModelSelect(null)
+
+    // Regenerate with the new model
+    await handleRegenerateEmail(index)
+  }
+
+  const handleUpdateInput = (name: "email" |"subject"| "body"|"sent", value: string, index: number) => {
+    const updatedMessages :Message[] = messages ;
+  if (typeof updatedMessages[index].content === 'object' && updatedMessages[index].content !== null) {
+    updatedMessages[index].content = { ...updatedMessages[index].content, [name]: value };
+  }
     setMessages(updatedMessages)
   }
 
@@ -758,7 +871,7 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
 
   const handleRegenerate = () => {
     if (messages.length > 0) {
-      const lastUserMessage = messages[messages.length - 2]
+      // const lastUserMessage = messages[messages.length - 2]
       setMessages(messages.slice(0, -1))
       handleSubmit({ preventDefault: () => {} } as React.FormEvent<HTMLFormElement>)
     }
@@ -777,9 +890,12 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
     </header>
   )
 
+  // Update the message list section to include the new features
+  // Replace the whole messageList constant with this updated version:
+
   const messageList = (
     <div className="my-4 flex h-fit min-h-full flex-col gap-4">
-      {messages.map((message, index) => (
+      {messages.map((message, index :number) => (
         <div
           key={index}
           data-role={message.role}
@@ -828,10 +944,75 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
                   onChange={(e) => handleUpdateInput("body", e.target.value, index)}
                   rows={5}
                   className="mt-1 block w-full h-96 rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                  onKeyDown={(e) => {
+                    // Allow Enter key to insert newline
+                    if (e.key === "Enter") {
+                      e.stopPropagation() // Prevent form submission
+                    }
+                  }}
                 />
               </div>
               <div className="flex justify-between items-center">
-                <Button onClick={() => handleSendEmail(message?.content)}>Send Email</Button>
+                <div className="flex items-center space-x-2">
+                  <Button onClick={() => handleSendEmail(message?.content, index)} disabled={sendingEmail === index}>
+                    {sendingEmail === index ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Sending...
+                      </>
+                    ) : message?.content?.sent ? (
+                      <>Email Sent</>
+                    ) : (
+                      <>Send Email</>
+                    )}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handleRegenerateEmail(index)}
+                    disabled={isLoading}
+                    size="sm"
+                  >
+                    {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCwIcon className="h-4 w-4" />}
+                    <span className="ml-1">Regenerate</span>
+                  </Button>
+
+                  <div className="relative">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowModelSelect(showModelSelect === index ? null : index)}
+                      size="sm"
+                    >
+                      <Database className="h-4 w-4 mr-1" />
+                      Model
+                    </Button>
+
+                    {showModelSelect === index && (
+                      <div className="absolute z-10 mt-2 w-56 max-h-[100px] overscroll-auto origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        <div className="py-1">
+                          {models.length > 0 ? (
+                            models.map((model) => (
+                              <button
+                                key={model.id}
+                                className={`block w-full text-left px-4 py-2 text-sm hover:bg-gray-100 ${
+                                  settings.selectedModel === model.id ? "bg-gray-50 font-medium" : ""
+                                }`}
+                                onClick={() => handleChangeModel(model.id, index)}
+                              >
+                                {model.id}
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-4 py-2 text-sm text-gray-500">No models available</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <p
                   className={cn(
                     "text-sm",

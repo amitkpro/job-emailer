@@ -96,7 +96,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    loadSettings()
+    loadSettings();
+    fetchModels();
   }, [])
 
   const updateApiKey = (key: string) => {
